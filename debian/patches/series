@@ -1,0 +1,5 @@
+0001-Fix-fPIE-casing.patch
+0002-Install-hook-relative-to-DESTDIR.patch
+0003-Change-script-shbangs-to-python3.patch
+0010-CVE-2021-20208.patch
+0011-fix-regression-for-CVE-2021-20208.patch
