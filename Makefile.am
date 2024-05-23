@@ -31,7 +31,7 @@ sbin_PROGRAMS =
 if CONFIG_CIFSUPCALL
 sbin_PROGRAMS += cifs.upcall
 cifs_upcall_SOURCES = cifs.upcall.c data_blob.c asn1.c spnego.c
-cifs_upcall_LDADD = -ltalloc -lkeyutils $(KRB5_LDADD) $(CAPNG_LDADD)
+cifs_upcall_LDADD = -ltalloc -lkeyutils $(GSSAPI_LDADD) $(KRB5_LDADD) $(CAPNG_LDADD)
 rst_man_pages += cifs.upcall.8
 #
 # Fix the pathnames in manpages. To prevent @label@ being replaced by m4, we
@@ -81,8 +81,7 @@ setcifsacl.rst: setcifsacl.rst.in
 endif
 
 if CONFIG_SMBINFO
-bin_PROGRAMS += smbinfo
-smbinfo_SOURCES = smbinfo.c
+bin_SCRIPTS += smbinfo
 rst_man_pages += smbinfo.1
 endif
 
@@ -118,12 +117,14 @@ endif
 
 SUBDIRS = contrib
 
-install-exec-hook:
-	(cd $(ROOTSBINDIR) && ln -sf mount.cifs mount.smb3)
+install-exec-hook: install-sbinPROGRAMS
+	(cd $(DESTDIR)$(ROOTSBINDIR) && ln -sf mount.cifs mount.smb3)
 
 install-data-hook:
-	(cd $(man8dir) && ln -sf mount.cifs.8 mount.smb3.8)
+if CONFIG_MAN
+	( cd $(DESTDIR)$(man8dir) && ln -sf mount.cifs.8 mount.smb3.8)
+endif
 
 uninstall-hook:
-	(cd $(ROOTSBINDIR) && rm -f $(ROOTSBINDIR)/mount.smb3)
-	(cd $(man8dir) && rm -f $(man8dir)/mount.smb3.8)
+	(cd $(DESTDIR)$(ROOTSBINDIR) && rm -f $(ROOTSBINDIR)/mount.smb3)
+	(cd $(DESTDIR)$(man8dir) && rm -f $(DESTDIR)$(man8dir)/mount.smb3.8)

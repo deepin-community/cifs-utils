@@ -91,8 +91,8 @@ POST_UNINSTALL = :
 build_triplet = @build@
 host_triplet = @host@
 root_sbin_PROGRAMS = mount.cifs$(EXEEXT)
-bin_PROGRAMS = $(am__EXEEXT_1) $(am__EXEEXT_2) $(am__EXEEXT_3)
-sbin_PROGRAMS = $(am__EXEEXT_4) $(am__EXEEXT_5)
+bin_PROGRAMS = $(am__EXEEXT_1) $(am__EXEEXT_2)
+sbin_PROGRAMS = $(am__EXEEXT_3) $(am__EXEEXT_4)
 @CONFIG_CIFSUPCALL_TRUE@am__append_1 = cifs.upcall
 @CONFIG_CIFSUPCALL_TRUE@am__append_2 = cifs.upcall.8
 @CONFIG_CIFSCREDS_TRUE@am__append_3 = cifscreds
@@ -131,14 +131,13 @@ CONFIG_CLEAN_VPATH_FILES =
 @CONFIG_CIFSCREDS_TRUE@am__EXEEXT_1 = cifscreds$(EXEEXT)
 @CONFIG_CIFSACL_TRUE@am__EXEEXT_2 = getcifsacl$(EXEEXT) \
 @CONFIG_CIFSACL_TRUE@	setcifsacl$(EXEEXT)
-@CONFIG_SMBINFO_TRUE@am__EXEEXT_3 = smbinfo$(EXEEXT)
 am__installdirs = "$(DESTDIR)$(bindir)" "$(DESTDIR)$(pamdir)" \
 	"$(DESTDIR)$(plugindir)" "$(DESTDIR)$(root_sbindir)" \
 	"$(DESTDIR)$(sbindir)" "$(DESTDIR)$(bindir)" \
 	"$(DESTDIR)$(man1dir)" "$(DESTDIR)$(man8dir)" \
 	"$(DESTDIR)$(includedir)"
-@CONFIG_CIFSUPCALL_TRUE@am__EXEEXT_4 = cifs.upcall$(EXEEXT)
-@CONFIG_CIFSIDMAP_TRUE@am__EXEEXT_5 = cifs.idmap$(EXEEXT)
+@CONFIG_CIFSUPCALL_TRUE@am__EXEEXT_3 = cifs.upcall$(EXEEXT)
+@CONFIG_CIFSIDMAP_TRUE@am__EXEEXT_4 = cifs.idmap$(EXEEXT)
 PROGRAMS = $(bin_PROGRAMS) $(pam_PROGRAMS) $(plugin_PROGRAMS) \
 	$(root_sbin_PROGRAMS) $(sbin_PROGRAMS)
 am__cifs_idmap_SOURCES_DIST = cifs.idmap.c idmap_plugin.c
@@ -155,6 +154,7 @@ am__cifs_upcall_SOURCES_DIST = cifs.upcall.c data_blob.c asn1.c \
 cifs_upcall_OBJECTS = $(am_cifs_upcall_OBJECTS)
 am__DEPENDENCIES_1 =
 @CONFIG_CIFSUPCALL_TRUE@cifs_upcall_DEPENDENCIES =  \
+@CONFIG_CIFSUPCALL_TRUE@	$(am__DEPENDENCIES_1) \
 @CONFIG_CIFSUPCALL_TRUE@	$(am__DEPENDENCIES_1)
 am__cifscreds_SOURCES_DIST = cifscreds.c cifskey.c resolve_host.c \
 	util.c
@@ -183,10 +183,6 @@ am__setcifsacl_SOURCES_DIST = setcifsacl.c idmap_plugin.c
 @CONFIG_CIFSACL_TRUE@	idmap_plugin.$(OBJEXT)
 setcifsacl_OBJECTS = $(am_setcifsacl_OBJECTS)
 setcifsacl_DEPENDENCIES =
-am__smbinfo_SOURCES_DIST = smbinfo.c
-@CONFIG_SMBINFO_TRUE@am_smbinfo_OBJECTS = smbinfo.$(OBJEXT)
-smbinfo_OBJECTS = $(am_smbinfo_OBJECTS)
-smbinfo_LDADD = $(LDADD)
 am__vpath_adj_setup = srcdirstrip=`echo "$(srcdir)" | sed 's|.|.|g'`;
 am__vpath_adj = case $$p in \
     $(srcdir)/*) f=`echo "$$p" | sed "s|^$$srcdirstrip/||"`;; \
@@ -245,13 +241,11 @@ am__v_CCLD_0 = @echo "  CCLD    " $@;
 am__v_CCLD_1 = 
 SOURCES = $(cifs_idmap_SOURCES) $(cifs_upcall_SOURCES) \
 	$(cifscreds_SOURCES) $(getcifsacl_SOURCES) idmapwb.c \
-	$(mount_cifs_SOURCES) pam_cifscreds.c $(setcifsacl_SOURCES) \
-	$(smbinfo_SOURCES)
+	$(mount_cifs_SOURCES) pam_cifscreds.c $(setcifsacl_SOURCES)
 DIST_SOURCES = $(am__cifs_idmap_SOURCES_DIST) \
 	$(am__cifs_upcall_SOURCES_DIST) $(am__cifscreds_SOURCES_DIST) \
 	$(am__getcifsacl_SOURCES_DIST) idmapwb.c $(mount_cifs_SOURCES) \
-	pam_cifscreds.c $(am__setcifsacl_SOURCES_DIST) \
-	$(am__smbinfo_SOURCES_DIST)
+	pam_cifscreds.c $(am__setcifsacl_SOURCES_DIST)
 RECURSIVE_TARGETS = all-recursive check-recursive cscopelist-recursive \
 	ctags-recursive dvi-recursive html-recursive info-recursive \
 	install-data-recursive install-dvi-recursive \
@@ -366,6 +360,7 @@ ECHO_T = @ECHO_T@
 EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 GREP = @GREP@
+GSSAPI_LDADD = @GSSAPI_LDADD@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -474,9 +469,9 @@ SUFFIXES = .rst .1 .8
 RST2MAN = $(have_rst2man) --syntax-highlight=none $< $@
 CLEANFILES = $(am__append_7) $(am__append_10) $(am__append_16) \
 	$(am__append_19)
-bin_SCRIPTS = $(am__append_13)
+bin_SCRIPTS = $(am__append_11) $(am__append_13)
 @CONFIG_CIFSUPCALL_TRUE@cifs_upcall_SOURCES = cifs.upcall.c data_blob.c asn1.c spnego.c
-@CONFIG_CIFSUPCALL_TRUE@cifs_upcall_LDADD = -ltalloc -lkeyutils $(KRB5_LDADD) $(CAPNG_LDADD)
+@CONFIG_CIFSUPCALL_TRUE@cifs_upcall_LDADD = -ltalloc -lkeyutils $(GSSAPI_LDADD) $(KRB5_LDADD) $(CAPNG_LDADD)
 @CONFIG_CIFSCREDS_TRUE@cifscreds_SOURCES = cifscreds.c cifskey.c resolve_host.c util.c
 @CONFIG_CIFSCREDS_TRUE@cifscreds_LDADD = -lkeyutils
 @CONFIG_CIFSIDMAP_TRUE@cifs_idmap_SOURCES = cifs.idmap.c idmap_plugin.c
@@ -485,7 +480,6 @@ bin_SCRIPTS = $(am__append_13)
 @CONFIG_CIFSACL_TRUE@getcifsacl_LDADD = -ldl
 @CONFIG_CIFSACL_TRUE@setcifsacl_SOURCES = setcifsacl.c idmap_plugin.c
 @CONFIG_CIFSACL_TRUE@setcifsacl_LDADD = -ldl
-@CONFIG_SMBINFO_TRUE@smbinfo_SOURCES = smbinfo.c
 @CONFIG_PLUGIN_TRUE@plugindir = $(pkglibdir)
 SUBDIRS = contrib
 all: config.h
@@ -783,10 +777,6 @@ mount.cifs$(EXEEXT): $(mount_cifs_OBJECTS) $(mount_cifs_DEPENDENCIES) $(EXTRA_mo
 setcifsacl$(EXEEXT): $(setcifsacl_OBJECTS) $(setcifsacl_DEPENDENCIES) $(EXTRA_setcifsacl_DEPENDENCIES) 
 	@rm -f setcifsacl$(EXEEXT)
 	$(AM_V_CCLD)$(LINK) $(setcifsacl_OBJECTS) $(setcifsacl_LDADD) $(LIBS)
-
-smbinfo$(EXEEXT): $(smbinfo_OBJECTS) $(smbinfo_DEPENDENCIES) $(EXTRA_smbinfo_DEPENDENCIES) 
-	@rm -f smbinfo$(EXEEXT)
-	$(AM_V_CCLD)$(LINK) $(smbinfo_OBJECTS) $(smbinfo_LDADD) $(LIBS)
 install-binSCRIPTS: $(bin_SCRIPTS)
 	@$(NORMAL_INSTALL)
 	@list='$(bin_SCRIPTS)'; test -n "$(bindir)" || list=; \
@@ -843,7 +833,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/pam_cifscreds.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/resolve_host.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/setcifsacl.Po@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/smbinfo.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/spnego.Po@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/util.Po@am__quote@
 
@@ -1441,15 +1430,15 @@ uninstall-man: uninstall-man1 uninstall-man8
 @CONFIG_PAM_TRUE@pam_cifscreds.so: pam_cifscreds.c cifskey.c resolve_host.c util.c
 @CONFIG_PAM_TRUE@	$(CC) $(DEFS) $(CFLAGS) $(AM_CFLAGS) $(LDFLAGS) -shared -fpic -o $@ $+ -lpam -lkeyutils
 
-install-exec-hook:
-	(cd $(ROOTSBINDIR) && ln -sf mount.cifs mount.smb3)
+install-exec-hook: install-sbinPROGRAMS
+	(cd $(DESTDIR)$(ROOTSBINDIR) && ln -sf mount.cifs mount.smb3)
 
 install-data-hook:
-	(cd $(man8dir) && ln -sf mount.cifs.8 mount.smb3.8)
+@CONFIG_MAN_TRUE@	( cd $(DESTDIR)$(man8dir) && ln -sf mount.cifs.8 mount.smb3.8)
 
 uninstall-hook:
-	(cd $(ROOTSBINDIR) && rm -f $(ROOTSBINDIR)/mount.smb3)
-	(cd $(man8dir) && rm -f $(man8dir)/mount.smb3.8)
+	(cd $(DESTDIR)$(ROOTSBINDIR) && rm -f $(ROOTSBINDIR)/mount.smb3)
+	(cd $(DESTDIR)$(man8dir) && rm -f $(DESTDIR)$(man8dir)/mount.smb3.8)
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.
