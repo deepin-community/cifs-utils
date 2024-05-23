@@ -36,6 +36,10 @@
 #elif defined(HAVE_KRB5_H)
 #include <krb5.h>
 #endif
+
+#include <gssapi/gssapi_krb5.h>
+#include <sys/utsname.h>
+
 #include <syslog.h>
 #include <dirent.h>
 #include <sys/types.h>
@@ -51,6 +55,10 @@
 #include <grp.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <sched.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include "data_blob.h"
 #include "spnego.h"
@@ -58,6 +66,10 @@
 
 #ifdef HAVE_LIBCAP_NG
 #include <cap-ng.h>
+#endif
+
+#ifndef discard_const
+#define discard_const(ptr) ((void *)((intptr_t)(ptr)))
 #endif
 
 static krb5_context	context;
@@ -88,6 +100,8 @@ typedef enum _sectype {
 static int
 trim_capabilities(bool need_environ)
 {
+	capng_select_t set = CAPNG_SELECT_CAPS;
+
 	capng_clear(CAPNG_SELECT_BOTH);
 
 	/* SETUID and SETGID to change uid, gid, and grouplist */
@@ -105,7 +119,10 @@ trim_capabilities(bool need_environ)
 		return 1;
 	}
 
-	if (capng_apply(CAPNG_SELECT_BOTH)) {
+	if (capng_have_capability(CAPNG_EFFECTIVE, CAP_SETPCAP)) {
+		set = CAPNG_SELECT_BOTH;
+	}
+	if (capng_apply(set)) {
 		syslog(LOG_ERR, "%s: Unable to apply capability set: %m\n", __func__);
 		return 1;
 	}
@@ -115,8 +132,13 @@ trim_capabilities(bool need_environ)
 static int
 drop_all_capabilities(void)
 {
+	capng_select_t set = CAPNG_SELECT_CAPS;
+
 	capng_clear(CAPNG_SELECT_BOTH);
-	if (capng_apply(CAPNG_SELECT_BOTH)) {
+	if (capng_have_capability(CAPNG_EFFECTIVE, CAP_SETPCAP)) {
+		set = CAPNG_SELECT_BOTH;
+	}
+	if (capng_apply(set)) {
 		syslog(LOG_ERR, "%s: Unable to apply capability set: %m\n", __func__);
 		return 1;
 	}
@@ -164,6 +186,14 @@ static char *cifs_krb5_principal_get_realm(krb5_principal principal)
 static void krb5_free_unparsed_name(krb5_context context, char *val)
 {
 	free(val);
+}
+#endif
+
+#if !defined(HAVE_KRB5_FREE_STRING)	/* Heimdal */
+static void krb5_free_string(krb5_context context, char *val)
+{
+	(void)context;
+	krb5_xfree(val);
 }
 #endif
 
@@ -228,6 +258,164 @@ err_ccstart:
 	krb5_free_principal(context, principal);
 err_cache:
 	return credtime;
+}
+
+static struct namespace_file {
+	int nstype;
+	const char *name;
+	int fd;
+} namespace_files[] = {
+
+#ifdef CLONE_NEWCGROUP
+	{ CLONE_NEWCGROUP, "cgroup", -1 },
+#endif
+
+#ifdef CLONE_NEWIPC
+	{ CLONE_NEWIPC, "ipc", -1 },
+#endif
+
+#ifdef CLONE_NEWUTS
+	{ CLONE_NEWUTS, "uts", -1 },
+#endif
+
+#ifdef CLONE_NEWNET
+	{ CLONE_NEWNET, "net", -1 },
+#endif
+
+#ifdef CLONE_NEWPID
+	{ CLONE_NEWPID, "pid", -1 },
+#endif
+
+#ifdef CLONE_NEWTIME
+	{ CLONE_NEWTIME, "time", -1 },
+#endif
+
+#ifdef CLONE_NEWNS
+	{ CLONE_NEWNS, "mnt", -1 },
+#endif
+
+#ifdef CLONE_NEWUSER
+	{ CLONE_NEWUSER, "user", -1 },
+#endif
+};
+
+#define NS_PATH_FMT    "/proc/%d/ns/%s"
+#define NS_PATH_MAXLEN (6 + 10 + 4 + 6 + 1)
+
+/**
+ * in_same_user_ns - return true if two processes are in the same user
+ *                   namespace.
+ * @pid_a: the pid of the first process
+ * @pid_b: the pid of the second process
+ *
+ * Works by comparing the inode numbers for /proc/<pid>/user.
+ */
+static int
+in_same_user_ns(pid_t pid_a, pid_t pid_b)
+{
+	char path[NS_PATH_MAXLEN];
+	ino_t a_ino, b_ino;
+	struct stat st;
+
+	snprintf(path, sizeof(path), NS_PATH_FMT, pid_a, "user");
+	if (stat(path, &st) != 0)
+		return 0;
+	a_ino = st.st_ino;
+
+	snprintf(path, sizeof(path), NS_PATH_FMT, pid_b, "user");
+	if (stat(path, &st) != 0)
+		return 0;
+	b_ino = st.st_ino;
+
+	return a_ino == b_ino;
+}
+
+/**
+ * switch_to_process_ns - change the namespace to the one for the specified
+ *                        process.
+ * @pid: initiating pid value from the upcall string
+ *
+ * Uses setns() to switch process namespace.
+ * This ensures that we have the same access and configuration as the
+ * process that triggered the lookup.
+ */
+static int
+switch_to_process_ns(pid_t pid)
+{
+	int count = sizeof(namespace_files) / sizeof(struct namespace_file);
+	int n, err = 0;
+	int rc = 0;
+
+	/* First, open all the namespace fds.  We do this first because
+	   the namespace changes might prohibit us from opening them. */
+	for (n = 0; n < count; ++n) {
+		char nspath[NS_PATH_MAXLEN];
+		int ret, fd;
+
+#ifdef CLONE_NEWUSER
+		if (namespace_files[n].nstype == CLONE_NEWUSER
+		    && in_same_user_ns(getpid(), pid)) {
+			/* Switching to the same user namespace is forbidden,
+			   because switching to a user namespace grants all
+			   capabilities in that namespace regardless of uid. */
+			namespace_files[n].fd = -1;
+			continue;
+		}
+#endif
+
+		ret = snprintf(nspath, NS_PATH_MAXLEN, NS_PATH_FMT,
+			       pid, namespace_files[n].name);
+		if (ret >= NS_PATH_MAXLEN) {
+			syslog(LOG_DEBUG, "%s: unterminated path!\n", __func__);
+			err = ENAMETOOLONG;
+			rc = -1;
+			goto out;
+		}
+
+		fd = open(nspath, O_RDONLY);
+		if (fd < 0 && errno != ENOENT) {
+			/*
+			 * don't stop on non-existing ns
+			 * but stop for other errors
+			 */
+			err = errno;
+			rc = -1;
+			goto out;
+		}
+
+		namespace_files[n].fd = fd;
+	}
+
+	/* Next, call setns for each of them */
+	for (n = 0; n < count; ++n) {
+		/* skip non-existing ns */
+		if (namespace_files[n].fd < 0)
+			continue;
+
+		rc = setns(namespace_files[n].fd, namespace_files[n].nstype);
+
+		if (rc < 0) {
+			syslog(LOG_DEBUG, "%s: setns() failed for %s\n",
+			       __func__, namespace_files[n].name);
+			err = errno;
+			goto out;
+		}
+	}
+
+out:
+	/* Finally, close all the fds */
+	for (n = 0; n < count; ++n) {
+		if (namespace_files[n].fd != -1) {
+			close(namespace_files[n].fd);
+			namespace_files[n].fd = -1;
+		}
+	}
+
+	if (rc != 0) {
+		errno = err;
+	}
+
+	return rc;
 }
 
 #define	ENV_PATH_FMT			"/proc/%d/environ"
@@ -447,6 +635,8 @@ icfk_cleanup:
 	goto out;
 }
 
+#define CIFS_SERVICE_NAME "cifs"
+
 static int
 cifs_krb5_get_req(const char *host, krb5_ccache ccache,
 		  DATA_BLOB * mechtoken, DATA_BLOB * sess_key)
@@ -468,8 +658,8 @@ cifs_krb5_get_req(const char *host, krb5_ccache ccache,
 		return ret;
 	}
 
-	ret = krb5_sname_to_principal(context, host, "cifs", KRB5_NT_UNKNOWN,
-					&in_creds.server);
+	ret = krb5_sname_to_principal(context, host, CIFS_SERVICE_NAME,
+					KRB5_NT_UNKNOWN, &in_creds.server);
 	if (ret) {
 		syslog(LOG_DEBUG, "%s: unable to convert sname to princ (%s).",
 		       __func__, host);
@@ -568,6 +758,123 @@ out_free_principal:
 	return ret;
 }
 
+static void cifs_gss_display_status_1(char *m, OM_uint32 code, int type) {
+	OM_uint32 min_stat;
+	gss_buffer_desc msg;
+	OM_uint32 msg_ctx;
+
+	msg_ctx = 0;
+	while (1) {
+		(void) gss_display_status(&min_stat, code, type,
+				GSS_C_NULL_OID, &msg_ctx, &msg);
+		syslog(LOG_DEBUG, "GSS-API error %s: %s\n", m, (char *) msg.value);
+		(void) gss_release_buffer(&min_stat, &msg);
+
+		if (!msg_ctx)
+			break;
+	}
+}
+
+void cifs_gss_display_status(char *msg, OM_uint32 maj_stat, OM_uint32 min_stat) {
+	cifs_gss_display_status_1(msg, maj_stat, GSS_C_GSS_CODE);
+	cifs_gss_display_status_1(msg, min_stat, GSS_C_MECH_CODE);
+}
+
+static int
+cifs_gss_get_req(const char *host, DATA_BLOB *mechtoken, DATA_BLOB *sess_key)
+{
+	OM_uint32 maj_stat, min_stat;
+	gss_name_t target_name;
+	gss_ctx_id_t ctx = GSS_C_NO_CONTEXT;
+	gss_buffer_desc output_token;
+	gss_krb5_lucid_context_v1_t *lucid_ctx = NULL;
+	gss_krb5_lucid_key_t *key = NULL;
+
+	size_t service_name_len = sizeof(CIFS_SERVICE_NAME) + 1 /* @ */ +
+		strlen(host) + 1;
+	char *service_name = malloc(service_name_len);
+	if (!service_name) {
+		syslog(LOG_DEBUG, "out of memory allocating service name");
+		maj_stat = GSS_S_FAILURE;
+		goto out;
+	}
+
+	snprintf(service_name, service_name_len, "%s@%s", CIFS_SERVICE_NAME,
+		 host);
+	gss_buffer_desc target_name_buf;
+	target_name_buf.value = service_name;
+	target_name_buf.length = service_name_len;
+
+	maj_stat = gss_import_name(&min_stat, &target_name_buf,
+			GSS_C_NT_HOSTBASED_SERVICE, &target_name);
+	free(service_name);
+	if (GSS_ERROR(maj_stat)) {
+		cifs_gss_display_status("gss_import_name", maj_stat, min_stat);
+		goto out;
+	}
+
+	maj_stat = gss_init_sec_context(&min_stat,
+			GSS_C_NO_CREDENTIAL, /* claimant_cred_handle */
+			&ctx,
+			target_name,
+			discard_const(gss_mech_krb5), /* force krb5 */
+			0, /* flags */
+			0, /* time_req */
+			GSS_C_NO_CHANNEL_BINDINGS, /* input_chan_bindings */
+			GSS_C_NO_BUFFER,
+			NULL, /* actual mech type */
+			&output_token,
+			NULL, /* ret_flags */
+			NULL); /* time_rec */
+
+	if (maj_stat != GSS_S_COMPLETE &&
+		maj_stat != GSS_S_CONTINUE_NEEDED) {
+		cifs_gss_display_status("init_sec_context", maj_stat, min_stat);
+		goto out_release_target_name;
+	}
+
+	/* as luck would have it, GSS-API hands us the finished article */
+	*mechtoken = data_blob(output_token.value, output_token.length);
+
+	maj_stat = gss_krb5_export_lucid_sec_context(&min_stat, &ctx, 1,
+							(void **)&lucid_ctx);
+
+	if (GSS_ERROR(maj_stat)) {
+		cifs_gss_display_status("gss_krb5_export_lucid_sec_context",
+					maj_stat, min_stat);
+		goto out_free_sec_ctx;
+	}
+
+	switch (lucid_ctx->protocol) {
+	case 0:
+		key = &lucid_ctx->rfc1964_kd.ctx_key;
+		break;
+	case 1:
+		if (lucid_ctx->cfx_kd.have_acceptor_subkey) {
+			key = &lucid_ctx->cfx_kd.acceptor_subkey;
+		} else {
+			key = &lucid_ctx->cfx_kd.ctx_key;
+		}
+		break;
+	default:
+		syslog(LOG_DEBUG, "wrong lucid context protocol %d",
+		       lucid_ctx->protocol);
+		goto out_free_lucid_ctx;
+	}
+
+	*sess_key = data_blob(key->data, key->length);
+
+out_free_lucid_ctx:
+	(void) gss_krb5_free_lucid_sec_context(&min_stat, lucid_ctx);
+out_free_sec_ctx:
+	(void) gss_delete_sec_context(&min_stat, &ctx, GSS_C_NO_BUFFER);
+	(void) gss_release_buffer(&min_stat, &output_token);
+out_release_target_name:
+	(void) gss_release_name(&min_stat, &target_name);
+out:
+	return GSS_ERROR(maj_stat);
+}
+
 /*
  * Prepares AP-REQ data for mechToken and gets session key
  * Uses credentials from cache. It will not ask for password
@@ -593,31 +900,67 @@ handle_krb5_mech(const char *oid, const char *host, DATA_BLOB * secblob,
 		 DATA_BLOB * sess_key, krb5_ccache ccache)
 {
 	int retval;
-	DATA_BLOB tkt, tkt_wrapped;
+	DATA_BLOB tkt_wrapped;
 
 	syslog(LOG_DEBUG, "%s: getting service ticket for %s", __func__, host);
 
-	/* get a kerberos ticket for the service and extract the session key */
-	retval = cifs_krb5_get_req(host, ccache, &tkt, sess_key);
-	if (retval) {
-		syslog(LOG_DEBUG, "%s: failed to obtain service ticket (%d)",
-		       __func__, retval);
-		return retval;
+	/*
+	 * Fall back to gssapi if there's no credential cache or no TGT
+	 * so that gssproxy can maybe help out.
+	 */
+	if (!ccache) {
+		syslog(LOG_DEBUG, "%s: using GSS-API", __func__);
+		retval = cifs_gss_get_req(host, &tkt_wrapped, sess_key);
+		if (retval) {
+			syslog(LOG_DEBUG, "%s: failed to obtain service ticket via GSS (%d)",
+			__func__, retval);
+			return retval;
+		}
+	} else {
+		DATA_BLOB tkt;
+		syslog(LOG_DEBUG, "%s: using native krb5", __func__);
+
+		/* get a kerberos ticket for the service and extract the session key */
+		retval = cifs_krb5_get_req(host, ccache, &tkt, sess_key);
+		if (retval) {
+			syslog(LOG_DEBUG, "%s: failed to obtain service ticket (%d)",
+			       __func__, retval);
+			return retval;
+		}
+
+		syslog(LOG_DEBUG, "%s: obtained service ticket", __func__);
+
+		/* wrap that up in a nice GSS-API wrapping */
+		tkt_wrapped = spnego_gen_krb5_wrap(tkt, TOK_ID_KRB_AP_REQ);
+		data_blob_free(&tkt);
 	}
-
-	syslog(LOG_DEBUG, "%s: obtained service ticket", __func__);
-
-	/* wrap that up in a nice GSS-API wrapping */
-	tkt_wrapped = spnego_gen_krb5_wrap(tkt, TOK_ID_KRB_AP_REQ);
 
 	/* and wrap that in a shiny SPNEGO wrapper */
 	*secblob = gen_negTokenInit(oid, tkt_wrapped);
 
 	data_blob_free(&tkt_wrapped);
-	data_blob_free(&tkt);
 	return retval;
 }
 
+
+
+struct decoded_args {
+	int ver;
+	char hostname[NI_MAXHOST + 1];
+	char ip[NI_MAXHOST + 1];
+
+/* Max user name length. */
+#define MAX_USERNAME_SIZE 256
+	char username[MAX_USERNAME_SIZE + 1];
+
+	uid_t uid;
+	uid_t creduid;
+	pid_t pid;
+	sectype_t sec;
+
+/*
+ * Flags to keep track of what was provided
+ */
 #define DKD_HAVE_HOSTNAME	0x1
 #define DKD_HAVE_VERSION	0x2
 #define DKD_HAVE_SEC		0x4
@@ -627,23 +970,13 @@ handle_krb5_mech(const char *oid, const char *host, DATA_BLOB * secblob,
 #define DKD_HAVE_CREDUID	0x40
 #define DKD_HAVE_USERNAME	0x80
 #define DKD_MUSTHAVE_SET (DKD_HAVE_HOSTNAME|DKD_HAVE_VERSION|DKD_HAVE_SEC)
-
-struct decoded_args {
-	int ver;
-	char *hostname;
-	char *ip;
-	char *username;
-	uid_t uid;
-	uid_t creduid;
-	pid_t pid;
-	sectype_t sec;
+	int have;
 };
 
 static unsigned int
-decode_key_description(const char *desc, struct decoded_args *arg)
+__decode_key_description(const char *desc, struct decoded_args *arg)
 {
-	int len;
-	int retval = 0;
+	size_t len;
 	char *pos;
 	const char *tkn = desc;
 
@@ -657,13 +990,13 @@ decode_key_description(const char *desc, struct decoded_args *arg)
 				len = pos - tkn;
 
 			len -= 5;
-			free(arg->hostname);
-			arg->hostname = strndup(tkn + 5, len);
-			if (arg->hostname == NULL) {
-				syslog(LOG_ERR, "Unable to allocate memory");
+			if (len > sizeof(arg->hostname)-1) {
+				syslog(LOG_ERR, "host= value too long for buffer");
 				return 1;
 			}
-			retval |= DKD_HAVE_HOSTNAME;
+			memset(arg->hostname, 0, sizeof(arg->hostname));
+			strncpy(arg->hostname, tkn + 5, len);
+			arg->have |= DKD_HAVE_HOSTNAME;
 			syslog(LOG_DEBUG, "host=%s", arg->hostname);
 		} else if (!strncmp(tkn, "ip4=", 4) || !strncmp(tkn, "ip6=", 4)) {
 			if (pos == NULL)
@@ -672,13 +1005,13 @@ decode_key_description(const char *desc, struct decoded_args *arg)
 				len = pos - tkn;
 
 			len -= 4;
-			free(arg->ip);
-			arg->ip = strndup(tkn + 4, len);
-			if (arg->ip == NULL) {
-				syslog(LOG_ERR, "Unable to allocate memory");
+			if (len > sizeof(arg->ip)-1) {
+				syslog(LOG_ERR, "ip[46]= value too long for buffer");
 				return 1;
 			}
-			retval |= DKD_HAVE_IP;
+			memset(arg->ip, 0, sizeof(arg->ip));
+			strncpy(arg->ip, tkn + 4, len);
+			arg->have |= DKD_HAVE_IP;
 			syslog(LOG_DEBUG, "ip=%s", arg->ip);
 		} else if (strncmp(tkn, "user=", 5) == 0) {
 			if (pos == NULL)
@@ -687,13 +1020,13 @@ decode_key_description(const char *desc, struct decoded_args *arg)
 				len = pos - tkn;
 
 			len -= 5;
-			free(arg->username);
-			arg->username = strndup(tkn + 5, len);
-			if (arg->username == NULL) {
-				syslog(LOG_ERR, "Unable to allocate memory");
+			if (len > sizeof(arg->username)-1) {
+				syslog(LOG_ERR, "user= value too long for buffer");
 				return 1;
 			}
-			retval |= DKD_HAVE_USERNAME;
+			memset(arg->username, 0, sizeof(arg->username));
+			strncpy(arg->username, tkn + 5, len);
+			arg->have |= DKD_HAVE_USERNAME;
 			syslog(LOG_DEBUG, "user=%s", arg->username);
 		} else if (strncmp(tkn, "pid=", 4) == 0) {
 			errno = 0;
@@ -704,13 +1037,13 @@ decode_key_description(const char *desc, struct decoded_args *arg)
 				return 1;
 			}
 			syslog(LOG_DEBUG, "pid=%u", arg->pid);
-			retval |= DKD_HAVE_PID;
+			arg->have |= DKD_HAVE_PID;
 		} else if (strncmp(tkn, "sec=", 4) == 0) {
 			if (strncmp(tkn + 4, "krb5", 4) == 0) {
-				retval |= DKD_HAVE_SEC;
+				arg->have |= DKD_HAVE_SEC;
 				arg->sec = KRB5;
 			} else if (strncmp(tkn + 4, "mskrb5", 6) == 0) {
-				retval |= DKD_HAVE_SEC;
+				arg->have |= DKD_HAVE_SEC;
 				arg->sec = MS_KRB5;
 			}
 			syslog(LOG_DEBUG, "sec=%d", arg->sec);
@@ -722,7 +1055,7 @@ decode_key_description(const char *desc, struct decoded_args *arg)
 				       strerror(errno));
 				return 1;
 			}
-			retval |= DKD_HAVE_UID;
+			arg->have |= DKD_HAVE_UID;
 			syslog(LOG_DEBUG, "uid=%u", arg->uid);
 		} else if (strncmp(tkn, "creduid=", 8) == 0) {
 			errno = 0;
@@ -732,7 +1065,7 @@ decode_key_description(const char *desc, struct decoded_args *arg)
 				       strerror(errno));
 				return 1;
 			}
-			retval |= DKD_HAVE_CREDUID;
+			arg->have |= DKD_HAVE_CREDUID;
 			syslog(LOG_DEBUG, "creduid=%u", arg->creduid);
 		} else if (strncmp(tkn, "ver=", 4) == 0) {	/* if version */
 			errno = 0;
@@ -742,14 +1075,56 @@ decode_key_description(const char *desc, struct decoded_args *arg)
 				       strerror(errno));
 				return 1;
 			}
-			retval |= DKD_HAVE_VERSION;
+			arg->have |= DKD_HAVE_VERSION;
 			syslog(LOG_DEBUG, "ver=%d", arg->ver);
 		}
 		if (pos == NULL)
 			break;
 		tkn = pos + 1;
 	} while (tkn);
-	return retval;
+	return 0;
+}
+
+static unsigned int
+decode_key_description(const char *desc, struct decoded_args **arg)
+{
+	pid_t pid;
+	pid_t rc;
+	int status;
+
+	/*
+	 * Do all the decoding/string processing in a child process
+	 * with low privileges.
+	 */
+
+	*arg = mmap(NULL, sizeof(struct decoded_args), PROT_READ | PROT_WRITE,
+		    MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+	if (*arg == MAP_FAILED) {
+		syslog(LOG_ERR, "%s: mmap failed: %s", __func__, strerror(errno));
+		return -1;
+	}
+
+	pid = fork();
+	if (pid < 0) {
+		syslog(LOG_ERR, "%s: fork failed: %s", __func__, strerror(errno));
+		munmap(*arg, sizeof(struct decoded_args));
+		*arg = NULL;
+		return -1;
+	}
+	if (pid == 0) {
+		/* do the parsing in child */
+		drop_all_capabilities();
+		exit(__decode_key_description(desc, *arg));
+	}
+
+	rc = waitpid(pid, &status, 0);
+	if (rc < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		munmap(*arg, sizeof(struct decoded_args));
+		*arg = NULL;
+		return 1;
+	}
+
+	return 0;
 }
 
 static int setup_key(const key_serial_t key, const void *data, size_t datalen)
@@ -923,13 +1298,12 @@ int main(const int argc, char *const argv[])
 	DATA_BLOB sess_key = data_blob_null;
 	key_serial_t key = 0;
 	size_t datalen;
-	unsigned int have;
 	long rc = 1;
 	int c;
 	bool try_dns = false, legacy_uid = false , env_probe = true;
 	char *buf;
 	char hostbuf[NI_MAXHOST], *host;
-	struct decoded_args arg;
+	struct decoded_args *arg = NULL;
 	const char *oid;
 	uid_t uid;
 	char *keytab_name = NULL;
@@ -940,7 +1314,6 @@ int main(const int argc, char *const argv[])
 	const char *key_descr = NULL;
 
 	hostbuf[0] = '\0';
-	memset(&arg, 0, sizeof(arg));
 
 	openlog(prog, 0, LOG_DAEMON);
 
@@ -981,9 +1354,6 @@ int main(const int argc, char *const argv[])
 		}
 	}
 
-	if (trim_capabilities(env_probe))
-		goto out;
-
 	/* is there a key? */
 	if (argc <= optind) {
 		usage();
@@ -1009,6 +1379,10 @@ int main(const int argc, char *const argv[])
 
 	syslog(LOG_DEBUG, "key description: %s", buf);
 
+	/*
+	 * If we are requested a simple DNS query, do it and exit
+	 */
+
 	if (strncmp(buf, "cifs.resolver", sizeof("cifs.resolver") - 1) == 0)
 		key_descr = ".cifs.resolver";
 	else if (strncmp(buf, "dns_resolver", sizeof("dns_resolver") - 1) == 0)
@@ -1018,39 +1392,63 @@ int main(const int argc, char *const argv[])
 		goto out;
 	}
 
-	have = decode_key_description(buf, &arg);
+	/*
+	 * Otherwise, it's a spnego key request
+	 */
+
+	rc = decode_key_description(buf, &arg);
 	free(buf);
-	if ((have & DKD_MUSTHAVE_SET) != DKD_MUSTHAVE_SET) {
+	if (rc) {
+		syslog(LOG_ERR, "failed to decode key description");
+		goto out;
+	}
+
+	if ((arg->have & DKD_MUSTHAVE_SET) != DKD_MUSTHAVE_SET) {
 		syslog(LOG_ERR, "unable to get necessary params from key "
-		       "description (0x%x)", have);
+		       "description (0x%x)", arg->have);
 		rc = 1;
 		goto out;
 	}
 
-	if (arg.ver > CIFS_SPNEGO_UPCALL_VERSION) {
+	if (arg->ver > CIFS_SPNEGO_UPCALL_VERSION) {
 		syslog(LOG_ERR, "incompatible kernel upcall version: 0x%x",
-		       arg.ver);
+		       arg->ver);
 		rc = 1;
 		goto out;
 	}
 
-	if (strlen(arg.hostname) >= NI_MAXHOST) {
+	if (strlen(arg->hostname) >= NI_MAXHOST) {
 		syslog(LOG_ERR, "hostname provided by kernel is too long");
 		rc = 1;
 		goto out;
 
 	}
 
-	if (!legacy_uid && (have & DKD_HAVE_CREDUID))
-		uid = arg.creduid;
-	else if (have & DKD_HAVE_UID)
-		uid = arg.uid;
+	if (!legacy_uid && (arg->have & DKD_HAVE_CREDUID))
+		uid = arg->creduid;
+	else if (arg->have & DKD_HAVE_UID)
+		uid = arg->uid;
 	else {
 		/* no uid= or creduid= parm -- something is wrong */
 		syslog(LOG_ERR, "No uid= or creduid= parm specified");
 		rc = 1;
 		goto out;
 	}
+
+	/*
+	 * Change to the process's namespace. This means that things will work
+	 * acceptably in containers, because we'll be looking at the correct
+	 * filesystem and have the correct network configuration.
+	 */
+	rc = switch_to_process_ns(arg->pid);
+	if (rc == -1) {
+		syslog(LOG_ERR, "unable to switch to process namespace: %s", strerror(errno));
+		rc = 1;
+		goto out;
+	}
+
+	if (trim_capabilities(env_probe))
+		goto out;
 
 	/*
 	 * The kernel doesn't pass down the gid, so we resort here to scraping
@@ -1097,7 +1495,7 @@ int main(const int argc, char *const argv[])
 	 * look at the environ file.
 	 */
 	env_cachename =
-		get_cachename_from_process_env(env_probe ? arg.pid : 0);
+		get_cachename_from_process_env(env_probe ? arg->pid : 0);
 
 	rc = setuid(uid);
 	if (rc == -1) {
@@ -1119,18 +1517,13 @@ int main(const int argc, char *const argv[])
 
 	ccache = get_existing_cc(env_cachename);
 	/* Couldn't find credcache? Try to use keytab */
-	if (ccache == NULL && arg.username != NULL)
-		ccache = init_cc_from_keytab(keytab_name, arg.username);
+	if (ccache == NULL && arg->username[0] != '\0')
+		ccache = init_cc_from_keytab(keytab_name, arg->username);
 
-	if (ccache == NULL) {
-		rc = 1;
-		goto out;
-	}
-
-	host = arg.hostname;
+	host = arg->hostname;
 
 	// do mech specific authorization
-	switch (arg.sec) {
+	switch (arg->sec) {
 	case MS_KRB5:
 	case KRB5:
 		/*
@@ -1146,7 +1539,7 @@ int main(const int argc, char *const argv[])
 		 * TRY only:
 		 * cifs/bar.example.com@REALM
 		 */
-		if (arg.sec == MS_KRB5)
+		if (arg->sec == MS_KRB5)
 			oid = OID_KERBEROS5_OLD;
 		else
 			oid = OID_KERBEROS5;
@@ -1203,10 +1596,10 @@ retry_new_hostname:
 				break;
 		}
 
-		if (!try_dns || !(have & DKD_HAVE_IP))
+		if (!try_dns || !(arg->have & DKD_HAVE_IP))
 			break;
 
-		rc = ip_to_fqdn(arg.ip, hostbuf, sizeof(hostbuf));
+		rc = ip_to_fqdn(arg->ip, hostbuf, sizeof(hostbuf));
 		if (rc)
 			break;
 
@@ -1214,7 +1607,7 @@ retry_new_hostname:
 		host = hostbuf;
 		goto retry_new_hostname;
 	default:
-		syslog(LOG_ERR, "sectype: %d is not implemented", arg.sec);
+		syslog(LOG_ERR, "sectype: %d is not implemented", arg->sec);
 		rc = 1;
 		break;
 	}
@@ -1232,7 +1625,7 @@ retry_new_hostname:
 		rc = 1;
 		goto out;
 	}
-	keydata->version = arg.ver;
+	keydata->version = arg->ver;
 	keydata->flags = 0;
 	keydata->sesskey_len = sess_key.length;
 	keydata->secblob_len = secblob.length;
@@ -1258,11 +1651,10 @@ out:
 		krb5_cc_close(context, ccache);
 	if (context)
 		krb5_free_context(context);
-	free(arg.hostname);
-	free(arg.ip);
-	free(arg.username);
 	free(keydata);
 	free(env_cachename);
+	if (arg)
+		munmap(arg, sizeof(*arg));
 	syslog(LOG_DEBUG, "Exit status %ld", rc);
 	return rc;
 }

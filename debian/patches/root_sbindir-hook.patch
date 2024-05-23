@@ -1,0 +1,9 @@
+diff --git a/Makefile.am b/Makefile.am
+index a15392d..64e2b44 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -119,3 +119,3 @@ SUBDIRS = contrib
+ 
+-install-exec-hook: install-sbinPROGRAMS
++install-exec-hook: install-root_sbinPROGRAMS
+ 	(cd $(DESTDIR)$(ROOTSBINDIR) && ln -sf mount.cifs mount.smb3)

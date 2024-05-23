@@ -1,12 +1,40 @@
-cifs-utils (2:6.11-3.1) unstable; urgency=medium
+cifs-utils (2:7.0-2) unstable; urgency=medium
 
-  * Non-maintainer upload
+  * root_sbindir-hook.patch - fix upstream fix for non-parallel
+    install. Actually Closes: #993014
 
-  [ Hideki Yamane ]
-  * debian/patches
-    - Add 0011-fix-regression-for-CVE-2021-20208.patch (Closes: #989080)
+ -- Michael Tokarev <mjt@tls.msk.ru>  Fri, 26 Aug 2022 17:06:45 +0300
 
- -- Sebastian Ramacher <sramacher@debian.org>  Mon, 26 Jul 2021 23:16:25 +0200
+cifs-utils (2:7.0-1) unstable; urgency=medium
+
+  * New upstream release (also Closes: #993014)
+  * d/control: add mjt@ to Uploaders
+  * d/patches: removed 2 patches from last upload (not needed for 7.0)
+  * permissons.patch: spelling fix
+  * debian/cifs-utils.lintian-overrides: reword the only override
+    to match current lintian
+
+ -- Michael Tokarev <mjt@tls.msk.ru>  Thu, 25 Aug 2022 23:09:14 +0300
+
+cifs-utils (2:6.14-1.1) unstable; urgency=high
+
+  * Non-maintainer upload.
+  * mount.cifs: fix length check for ip option parsing (CVE-2022-27239)
+    (Closes: #1010818)
+  * mount.cifs: fix verbose messages on option parsing (CVE-2022-29869)
+    (Closes: #1010818)
+
+ -- Salvatore Bonaccorso <carnil@debian.org>  Tue, 10 May 2022 21:59:48 +0200
+
+cifs-utils (2:6.14-1) unstable; urgency=medium
+
+  * New upstream version 6.14
+    - Remove 0002-Install-hook-relative-to-DESTDIR.patch, fixed upstream
+    - Remove 0010-CVE-2021-20208.patch, merged
+  * Fix d/watch
+  * Standards-Version: 4.6.0
+
+ -- Mathieu Parent <sathieu@debian.org>  Tue, 14 Dec 2021 11:15:06 +0100
 
 cifs-utils (2:6.11-3) unstable; urgency=high
 

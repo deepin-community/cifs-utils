@@ -1,7 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([cifs-utils],[6.11],[linux-cifs@vger.kernel.org],[cifs-utils],[https://wiki.samba.org/index.php/LinuxCIFS_utils])
+AC_INIT([cifs-utils],[7.0],[linux-cifs@vger.kernel.org],[cifs-utils],[https://wiki.samba.org/index.php/LinuxCIFS_utils])
 AC_CONFIG_SRCDIR([data_blob.h])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_FILES([Makefile contrib/Makefile contrib/request-key.d/Makefile])
@@ -208,6 +208,12 @@ if test $enable_cifsupcall != "no"; then
 			[ KRB5_LDADD='-lkrb5' ],
 			AC_MSG_ERROR([no functioning krb5 library found!]))
 	AC_SUBST(KRB5_LDADD)
+	save_LIBS=$LIBS
+	AC_SEARCH_LIBS([gss_init_sec_context], [gssapi_krb5 gssapi],
+			[ GSSAPI_LDADD="$ac_cv_search_gss_init_sec_context" ],
+			AC_MSG_ERROR([no functioning gssapi library found!]))
+	LIBS=$save_LIBS
+	AC_SUBST(GSSAPI_LDADD)
 fi
 
 # checks for wbclient.h and libwbclient.so library
@@ -254,6 +260,11 @@ fi
 if test $enable_cifsupcall != "no"; then
 	AC_CHECK_FUNCS([krb5_principal_get_realm krb5_free_unparsed_name])
 	AC_CHECK_FUNCS([krb5_auth_con_setaddrs krb5_auth_con_set_req_cksumtype])
+fi
+
+# determine how to free a string allocated by a krb5 function
+if test $enable_cifsupcall != "no"; then
+	AC_CHECK_FUNCS([krb5_free_string])
 fi
 
 if test $enable_systemd != "no"; then

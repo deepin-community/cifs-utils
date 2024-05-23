@@ -1,0 +1,14 @@
+diff --git a/cifscreds.c b/cifscreds.c
+index 32f2ee4..44ecc3f 100644
+--- a/cifscreds.c
++++ b/cifscreds.c
+@@ -227 +227 @@ static int cifscreds_add(struct cmdarg *arg)
+-				fprintf(stderr, "error: Setting permissons "
++				fprintf(stderr, "error: Setting permissions "
+diff --git a/pam_cifscreds.c b/pam_cifscreds.c
+index 5d99c2d..6e27a2b 100644
+--- a/pam_cifscreds.c
++++ b/pam_cifscreds.c
+@@ -245 +245 @@ static int cifscreds_pam_add(pam_handle_t *ph, const char *user, const char *pas
+-				pam_syslog(ph, LOG_ERR,"error: Setting permissons "
++				pam_syslog(ph, LOG_ERR,"error: Setting permissions "
