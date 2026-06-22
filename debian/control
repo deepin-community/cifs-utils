@@ -8,18 +8,19 @@ Uploaders:
 	Jelmer Vernooĳ <jelmer@debian.org>,
 	Mathieu Parent <sathieu@debian.org>,
 	Michael Tokarev <mjt@tls.msk.ru>,
-Build-Depends:
+Build-Depends: debhelper-compat (= 13),
 	libkeyutils-dev,
 	libcap-ng-dev,
 	libkrb5-dev,
 	libpam0g-dev,
-	libtalloc-dev (>= 1.2.0~git20080616),
-	libwbclient-dev (>= 2:3.6.5-3),
+	libtalloc-dev,
+	libwbclient-dev,
+	pkgconf,
 	python3-docutils,
-	debhelper-compat (= 13),
 	bash-completion,
-Standards-Version: 4.6.0
-Homepage: https://www.samba.org/~jlayton/cifs-utils/
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://wiki.samba.org/index.php/LinuxCIFS_utils
 Vcs-Git: https://salsa.debian.org/samba-team/cifs-utils.git
 Vcs-Browser: https://salsa.debian.org/samba-team/cifs-utils
 

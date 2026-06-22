@@ -78,15 +78,28 @@ password=arg|pass=arg
   Note that a password which contains the delimiter character (i.e. a
   comma ',') will fail to be parsed correctly on the command
   line. However, the same password defined in the PASSWD environment
-  variable or via a credentials file (see below) or entered at the
-  password prompt will be read correctly.
+  variable or via a credentials file or entered at the password prompt
+  will be read correctly.
+
+password2=arg|pass2=arg
+  specifies an alternate password to help with password rotation. If
+  this option is not given, then the environment variable PASSWD2 is used.
+  If password2 is not specified directly or indirectly via an argument
+  to mount, mount.cifs will NOT prompt for password2.
+
+  Note that a password2 which contains the delimiter character (i.e. a
+  comma ',') will fail to be parsed correctly on the command
+  line. However, the same password2 defined in the PASSWD2 environment
+  variable or via a credentials file (see below) will be read correctly.
 
 credentials=filename|cred=filename
   specifies a file that contains a username and/or password and
-  optionally the name of the workgroup. The format of the file is::
+  optionally an alternate password and/or the name of the workgroup.
+  The format of the file is::
 
    username=value
    password=value
+   password2=value
    domain=value
 
   This is preferred over having passwords in plaintext in a shared file,
@@ -272,6 +285,14 @@ handlecache
 nohandlecache
   Disable caching of the share root directory handle.
 
+max_cached_dirs=arg
+  The maximum number of cached directories per share. Directories are cached locally
+  when a lease is granted by the server, which improves performance by reducing network
+  traffic.
+
+  By default, ``max_cached_dirs`` is set to 16 and can hold values between 0
+  and a maximum value of 2^32 - 1.
+
 handletimeout=arg
   The time (in milliseconds) for which the server should reserve the handle after
   a failover waiting for the client to reconnect.  When mounting with
@@ -321,11 +342,12 @@ soft
 noacl
   Do not allow POSIX ACL operations even if server would support them.
 
-  The CIFS client can get and set POSIX ACLs (getfacl, setfacl) to Samba
-  servers version 3.0.10 and later. Setting POSIX ACLs requires enabling
-  both ``CIFS_XATTR`` and then ``CIFS_POSIX`` support in the CIFS
-  configuration options when building the cifs module. POSIX ACL support
-  can be disabled on a per mount basis by specifying ``noacl`` on mount.
+  The CIFS client can get and set POSIX ACLs (getfacl, setfacl) to
+  Samba servers version 3.0.10 and later. Setting POSIX ACLs requires
+  enabling both ``CONFIG_CIFS_XATTR`` and then ``CONFIG_CIFS_POSIX``
+  support in the CIFS configuration options when building the cifs
+  module. POSIX ACL support can be disabled on a per mount basis by
+  specifying ``noacl`` on mount.
 
 cifsacl
   This option is used to map CIFS/NTFS ACLs to/from Linux permission
@@ -379,6 +401,19 @@ sec=arg
 seal
   Request encryption at the SMB layer. The encryption algorithm used
   is AES-128-CCM. Requires SMB3 or above (see ``vers``).
+
+esize=arg
+  The minimum size (in bytes) of an encrypted read response at which the
+  client will offload decryption to a separate worker thread. This will work
+  when the number of in-flight requests are greater than 1.
+
+  Decryption of large encrypted read responses can be computationally expensive
+  and, when multiple reads are in flight, offloading the work can improve
+  performance.
+
+  The default is ``esize=0``, which means that all encrypted read responses are
+  decrypted without offload and can be set up to the maximum buffer size, which
+  can range from 8192 to 130048 bytes, and defaults to 16384 bytes.
 
 rdma
   Connect directly to the server using SMB Direct via a RDMA
@@ -586,7 +621,59 @@ actimeo=arg
   the server. Longer timeouts mean a reduced number of calls to the
   server but looser cache coherency. The ``actimeo`` value is a positive
   integer that can hold values between 0 and a maximum value of 2^30 \*
-  HZ (frequency of timer interrupt) setting.
+  HZ (frequency of timer interrupt) setting. Setting it to 0 disables
+  caching.
+
+acregmax=arg
+  The maximum time (in seconds) that the CIFS client caches attributes of a
+  regular file before it requests fresh attribute information from a server.
+  If this option is not specified, then acregmax value will be set to ``actimeo``
+  value, see ``actimeo`` for more details.
+
+acdirmax=arg
+  The maximum time (in seconds) that the CIFS client caches attributes of a
+  directory before it requests fresh attribute information from a server.
+  If this option is not specified, then acdirmax value will be set to ``actimeo``
+  value, see ``actimeo`` for more details.
+
+upcall_target=arg
+  Determines the namespace in which upcalls from the SMB filesystem should be handled.
+  Allowed values are:
+  - ``mount`` - Resolve upcalls to the host namespace.
+  - ``app`` - Resolve upcalls in the namespace of the calling thread (application).
+  Default value is ``app``.
+  This option is useful in environments like Kubernetes, where the mount
+  may be performed by a driver pod on behalf of an application running
+  in a separate container. It ensures that Kerberos credentials and other
+  user-specific data are accessed in the correct namespace.
+  By specifying ``app``, upcalls can be resolved in the application's namespace,
+  ensuring the correct credentials are used. ``mount`` allows resolution in the
+  host namespace, which may be necessary when credentials or configurations
+  are managed outside the container.
+
+multichannel
+  This option enables multichannel feature. Multichannel is an SMB3 protocol
+  feature that allows client to establish multiple transport connections to an
+  SMB server and bind them into a single authenticated SMB session. This feature
+  enhances fault tolerance and increases throughput by distributing traffic
+  across several connections. With this mount option default is to use two
+  channels if the server supports multichannel. The ``max_channels`` parameter
+  can be specified if you desire to use more than two channels.
+
+max_channels=arg
+  This option is applicable while using ``multichannel`` feature. max_channels
+  option allows the user to specify the number of transport connections that
+  should be establised between client and server up to a limit of 16. Using
+  this option implicitly enables the ``multichannel`` feature.
+  If max_channels option not specified, ``multichannel`` feature defaults to
+  using 2 connections.
+
+closetimeo=arg
+  The maximum time (in seconds) that the CIFS client defers sending the final
+  SMB3 close when the client has a handle lease on the file.
+
+  By default, ``closetimeo`` is set to 1 second and can hold values between 0
+  and a maximum value of 2^30 \* HZ.
 
 noposixpaths
   If unix extensions are enabled on a share, then the client will
@@ -597,6 +684,11 @@ noposixpaths
 
 posixpaths
   Inverse of ``noposixpaths`` .
+
+compress
+  **EXPERIMENTAL FEATURE** Enables over-the-wire message compression for
+  SMB 3.1.1 or higher mounts. Mount fails when compress is on and ``vers`` is
+  set to a version lower than 3.1.1.
 
 vers=arg
   SMB protocol version. Allowed values are:
@@ -623,6 +715,10 @@ vers=arg
   the highest possible version greater than or equal to ``2.1``. In
   kernels prior to v4.13, the default was ``1.0``. For kernels
   between v4.13 and v4.13.5 the default is ``3.0``.
+
+sloppy
+  Allows the system to ignore any unrecognized mount options that follow this
+  option instead of failing to mount altogether.
 
 --verbose
   Print additional debugging information for the mount. Note that this
@@ -750,8 +846,19 @@ bits, and POSIX ACL as user authentication model. This is the most
 common authentication model for CIFS servers and is the one used by
 Windows.
 
-Support for this requires both CIFS_XATTR and CIFS_ACL support in the
-CIFS configuration options when building the cifs module.
+Support for this requires cifs kernel module built with both
+``CONFIG_CIFS_XATTR`` and ``CONFIG_CIFS_ACL`` options enabled.  Since
+Linux 5.3, ``CONFIG_CIFS_ACL`` option no longer exists as CIFS/NTFS
+ACL support is always built into cifs kernel module.
+
+Most distribution kernels will already have those options enabled by
+default, but you can still check if they are enabled with::
+
+  cat /lib/modules/$(uname -r)/build/.config
+
+Alternatively, if kernel is configured with ``CONFIG_IKCONFIG_PROC``::
+
+  zcat /proc/config.gz
 
 A CIFS/NTFS ACL is mapped to file permission bits using an algorithm
 specified in the following Microsoft TechNet document:
@@ -761,10 +868,10 @@ specified in the following Microsoft TechNet document:
 In order to map SIDs to/from UIDs and GIDs, the following is required:
 
 - a kernel upcall to the ``cifs.idmap`` utility set up via request-key.conf(5)
-- winbind support configured via nsswitch.conf(5) and smb.conf(5)
+- winbind or sssd support configured via nsswitch.conf(5)
 
-Please refer to the respective manpages of cifs.idmap(8) and
-winbindd(8) for more information.
+Please refer to the respective manpages of cifs.idmap(8), winbindd(8)
+and sssd(8) for more information.
 
 Security descriptors for a file object can be retrieved and set
 directly using extended attribute named ``system.cifs_acl``. The
@@ -780,10 +887,10 @@ Some of the things to consider while using this mount option:
 - The mapping between a CIFS/NTFS ACL and POSIX file permission bits
   is imperfect and some ACL information may be lost in the
   translation.
-- If either upcall to cifs.idmap is not setup correctly or winbind is
-  not configured and running, ID mapping will fail. In that case uid
-  and gid will default to either to those values of the share or to
-  the values of uid and/or gid mount options if specified.
+- If either upcall to cifs.idmap is not setup correctly or winbind or
+  sssd is not configured and running, ID mapping will fail. In that
+  case uid and gid will default to either to those values of the share
+  or to the values of uid and/or gid mount options if specified.
 
 **********************************
 ACCESSING FILES WITH BACKUP INTENT
@@ -873,12 +980,12 @@ The variable ``USER`` may contain the username of the person to be used
 to authenticate to the server. The variable can be used to set both
 username and password by using the format ``username%password``.
 
-The variable ``PASSWD`` may contain the password of the person using
-the client.
+The variables ``PASSWD`` and ``PASSWD2`` may contain the password and the
+alternate password of the person using the client, respectively.
 
-The variable ``PASSWD_FILE`` may contain the pathname of a file to read
-the password from. A single line of input is read and used as the
-password.
+The variables ``PASSWD_FILE`` and ``PASSWD2_FILE`` may contain the
+pathname of the file to read password or password2 from, respectively.
+A single line of input is read and used as the password in each case.
 
 *****
 NOTES

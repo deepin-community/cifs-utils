@@ -1,0 +1,9 @@
+#!/bin/sh
+
+set -e
+
+if [ "$1" != "upgrade" ]; then
+    update-alternatives --remove idmap-plugin /usr/lib/#DEB_HOST_MULTIARCH#/cifs-utils/idmapwb.so
+fi
+
+#DEBHELPER#

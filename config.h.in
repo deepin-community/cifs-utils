@@ -79,6 +79,12 @@
 /* Define if libcap exists */
 #undef HAVE_LIBCAP
 
+/* libcap-ng support */
+#undef HAVE_LIBCAP_NG
+
+/* Define to 1 if you have the `talloc' library (-ltalloc). */
+#undef HAVE_LIBTALLOC
+
 /* Define to 1 if you have the `wbclient' library (-lwbclient). */
 #undef HAVE_LIBWBCLIENT
 

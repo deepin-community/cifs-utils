@@ -1,0 +1,2 @@
+# as of 7.2, upstream does not remove a generated file:
+cifs.upcall.rst

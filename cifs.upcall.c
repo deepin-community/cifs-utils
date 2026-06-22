@@ -498,10 +498,11 @@ retry:
 		/* We read to the end of the buffer. Double and try again */
 		syslog(LOG_DEBUG, "%s: read to end of buffer (%zu bytes)\n",
 					__func__, bufsize);
-		free(buf);
-		bufsize *= 2;
 		if (lseek(fd, 0, SEEK_SET) < 0)
 			goto out_close;
+		free(buf);
+		buf = NULL;
+		bufsize *= 2;
 		goto retry;
 	}
 
@@ -550,11 +551,6 @@ get_existing_cc(const char *env_cachename)
 	} else {
 		syslog(LOG_DEBUG, "%s: default ccache is %s\n", __func__, cachename);
 		krb5_free_string(context, cachename);
-	}
-
-	if (!get_tgt_time(cc)) {
-		krb5_cc_close(context, cc);
-		cc = NULL;
 	}
 	return cc;
 }
@@ -636,6 +632,55 @@ icfk_cleanup:
 }
 
 #define CIFS_SERVICE_NAME "cifs"
+
+static krb5_error_code check_service_ticket_exists(krb5_ccache ccache,
+						   const char *hostname)
+{
+	krb5_creds mcreds, out_creds;
+	const char *errmsg;
+	krb5_error_code rc;
+
+	memset(&mcreds, 0, sizeof(mcreds));
+
+	rc = krb5_cc_get_principal(context, ccache, &mcreds.client);
+	if (rc) {
+		errmsg = krb5_get_error_message(context, rc);
+		syslog(LOG_DEBUG, "%s: unable to get client principal from cache: %s",
+		       __func__, errmsg);
+		krb5_free_error_message(context, errmsg);
+		return rc;
+	}
+
+	rc = krb5_sname_to_principal(context, hostname, CIFS_SERVICE_NAME,
+			KRB5_NT_UNKNOWN, &mcreds.server);
+	if (rc) {
+		errmsg = krb5_get_error_message(context, rc);
+		syslog(LOG_DEBUG, "%s: unable to convert service name (%s) to principal: %s",
+		       __func__, hostname, errmsg);
+		krb5_free_error_message(context, errmsg);
+		krb5_free_principal(context, mcreds.client);
+		return rc;
+	}
+
+	rc = krb5_timeofday(context, &mcreds.times.endtime);
+	if (rc) {
+		errmsg = krb5_get_error_message(context, rc);
+		syslog(LOG_DEBUG, "%s: unable to get time: %s", __func__, errmsg);
+		krb5_free_error_message(context, errmsg);
+		goto out_free_principal;
+	}
+
+	rc = krb5_cc_retrieve_cred(context, ccache, KRB5_TC_MATCH_TIMES, &mcreds, &out_creds);
+
+	if (!rc)
+		krb5_free_cred_contents(context, &out_creds);
+
+out_free_principal:
+	krb5_free_principal(context, mcreds.server);
+	krb5_free_principal(context, mcreds.client);
+
+	return rc;
+}
 
 static int
 cifs_krb5_get_req(const char *host, krb5_ccache ccache,
@@ -953,6 +998,13 @@ struct decoded_args {
 #define MAX_USERNAME_SIZE 256
 	char username[MAX_USERNAME_SIZE + 1];
 
+#define MAX_UPCALL_STRING_LEN 6 /* "mount\0" */
+	enum upcall_target_enum {
+		UPTARGET_UNSPECIFIED, /* not specified, defaults to app */
+		UPTARGET_MOUNT, /* upcall to the mount namespace */
+		UPTARGET_APP, /* upcall to the application namespace which did the mount */
+	} upcall_target;
+
 	uid_t uid;
 	uid_t creduid;
 	pid_t pid;
@@ -969,6 +1021,7 @@ struct decoded_args {
 #define DKD_HAVE_PID		0x20
 #define DKD_HAVE_CREDUID	0x40
 #define DKD_HAVE_USERNAME	0x80
+#define DKD_HAVE_UPCALL_TARGET	0x100
 #define DKD_MUSTHAVE_SET (DKD_HAVE_HOSTNAME|DKD_HAVE_VERSION|DKD_HAVE_SEC)
 	int have;
 };
@@ -979,6 +1032,7 @@ __decode_key_description(const char *desc, struct decoded_args *arg)
 	size_t len;
 	char *pos;
 	const char *tkn = desc;
+	arg->upcall_target = UPTARGET_UNSPECIFIED;
 
 	do {
 		pos = index(tkn, ';');
@@ -1077,6 +1131,31 @@ __decode_key_description(const char *desc, struct decoded_args *arg)
 			}
 			arg->have |= DKD_HAVE_VERSION;
 			syslog(LOG_DEBUG, "ver=%d", arg->ver);
+		} else if (strncmp(tkn, "upcall_target=", 14) == 0) {
+			if (pos == NULL)
+				len = strlen(tkn);
+			else
+				len = pos - tkn;
+
+			len -= 14;
+			if (len > MAX_UPCALL_STRING_LEN) {
+				syslog(LOG_ERR, "upcall_target= value too long for buffer");
+				return 1;
+			}
+			if (strncmp(tkn + 14, "mount", 5) == 0) {
+				arg->upcall_target = UPTARGET_MOUNT;
+				syslog(LOG_DEBUG, "upcall_target=mount");
+			} else if (strncmp(tkn + 14, "app", 3) == 0) {
+				arg->upcall_target = UPTARGET_APP;
+				syslog(LOG_DEBUG, "upcall_target=app");
+			} else {
+				// Should never happen
+				syslog(LOG_ERR, "Invalid upcall_target value: %s, defaulting to app",
+				       tkn + 14);
+				arg->upcall_target = UPTARGET_APP;
+				syslog(LOG_DEBUG, "upcall_target=app");
+			}
+			arg->have |= DKD_HAVE_UPCALL_TARGET;
 		}
 		if (pos == NULL)
 			break;
@@ -1440,15 +1519,21 @@ int main(const int argc, char *const argv[])
 	 * acceptably in containers, because we'll be looking at the correct
 	 * filesystem and have the correct network configuration.
 	 */
-	rc = switch_to_process_ns(arg->pid);
-	if (rc == -1) {
-		syslog(LOG_ERR, "unable to switch to process namespace: %s", strerror(errno));
-		rc = 1;
-		goto out;
+	if (arg->upcall_target == UPTARGET_APP || arg->upcall_target == UPTARGET_UNSPECIFIED) {
+		syslog(LOG_INFO, "upcall_target=app, switching namespaces to application thread");
+		arg->upcall_target = UPTARGET_APP;
+		rc = switch_to_process_ns(arg->pid);
+		if (rc == -1) {
+			syslog(LOG_ERR, "unable to switch to process namespace: %s", strerror(errno));
+			rc = 1;
+			goto out;
+		}
+		if (trim_capabilities(env_probe))
+			goto out;
+	} else {
+		syslog(LOG_INFO, "upcall_target=mount, not switching namespaces to application thread");
 	}
 
-	if (trim_capabilities(env_probe))
-		goto out;
 
 	/*
 	 * The kernel doesn't pass down the gid, so we resort here to scraping
@@ -1495,7 +1580,7 @@ int main(const int argc, char *const argv[])
 	 * look at the environ file.
 	 */
 	env_cachename =
-		get_cachename_from_process_env(env_probe ? arg->pid : 0);
+		get_cachename_from_process_env((env_probe && (arg->upcall_target == UPTARGET_APP)) ? arg->pid : 0);
 
 	rc = setuid(uid);
 	if (rc == -1) {
@@ -1515,12 +1600,26 @@ int main(const int argc, char *const argv[])
 		goto out;
 	}
 
+	host = arg->hostname;
 	ccache = get_existing_cc(env_cachename);
+	if (ccache != NULL) {
+		rc = check_service_ticket_exists(ccache, host);
+		if(rc == 0) {
+			 syslog(LOG_DEBUG, "%s: valid service ticket exists in credential cache",
+					 __func__);
+		} else {
+			 if (!get_tgt_time(ccache)) {
+				syslog(LOG_DEBUG, "%s: valid TGT is not present in credential cache",
+						__func__);
+				krb5_cc_close(context, ccache);
+				ccache = NULL;
+			}
+		}
+	}
 	/* Couldn't find credcache? Try to use keytab */
 	if (ccache == NULL && arg->username[0] != '\0')
 		ccache = init_cc_from_keytab(keytab_name, arg->username);
 
-	host = arg->hostname;
 
 	// do mech specific authorization
 	switch (arg->sec) {

@@ -1,3 +1,64 @@
+cifs-utils (2:7.4-1) unstable; urgency=medium
+
+  * new upstream release
+    Closes: #1105747
+
+ -- Michael Tokarev <mjt@tls.msk.ru>  Thu, 12 Jun 2025 22:32:49 +0300
+
+cifs-utils (2:7.3-1) unstable; urgency=medium
+
+  * new upstream release
+  * remove cifs.upcall.rst (generated from cifs.upcall.rst.in)
+    (Closes: #1043787)
+  * mount.cifs-restore-guest-mount.patch: remove (fixed upstream)
+
+ -- Michael Tokarev <mjt@tls.msk.ru>  Sat, 22 Mar 2025 18:51:56 +0300
+
+cifs-utils (2:7.2-2) unstable; urgency=medium
+
+  * d/rules, d/postinst, d/postrm: dh_installdeb
+    can do #DEB_HOST_MULTIARCH# substitutions for us
+  * d/rules: s/override_dh_fixperms/execute_after_dh_fixperms/
+  * mount.cifs-restore-guest-mount.patch
+    Closes: #1100615
+
+ -- Michael Tokarev <mjt@tls.msk.ru>  Mon, 17 Mar 2025 09:58:44 +0300
+
+cifs-utils (2:7.2-1) unstable; urgency=medium
+
+  * new upstream release
+  * spelling.patch: reduce context
+  * permissons.patch: fold into spelling.patch
+
+ -- Michael Tokarev <mjt@tls.msk.ru>  Sat, 15 Mar 2025 12:12:39 +0300
+
+cifs-utils (2:7.1-1) unstable; urgency=medium
+
+  * New upstream version 7.1
+   - 0003-Change-script-shbangs-to-python3.patch: remove
+   - root_sbindir-hook.patch: remove, not needed anymore
+  * d/control: update homepage
+  * d/control: bump Standards-Version to 4.7.0 (no changes needed)
+  * d/control: cosmetics: move debhelper-compat build-dep
+  * d/control: add pkgconf to Build-Depends (Closes: #1090201)
+  * d/control: Rules-Requires-Root: no
+  * spelling.patch: fix a few spelling errors
+  * acknowledge the previous NMU
+
+ -- Michael Tokarev <mjt@tls.msk.ru>  Thu, 26 Dec 2024 11:36:04 +0300
+
+cifs-utils (2:7.0-2.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+
+  [ Debian Janitor ]
+  * Remove constraints unnecessary since buster
+
+  [ Michael Biebl ]
+  * Install files into /usr (DEP17 M2). (Closes: #1061332)
+
+ -- Chris Hofstaedtler <zeha@debian.org>  Mon, 17 Jun 2024 00:00:05 +0200
+
 cifs-utils (2:7.0-2) unstable; urgency=medium
 
   * root_sbindir-hook.patch - fix upstream fix for non-parallel

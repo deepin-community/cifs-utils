@@ -1,0 +1,52 @@
+From: Michael Tokarev <mjt@tls.msk.ru>
+Date: Sat, 15 Mar 2025 10:58:41 +0300
+Subject: spelling fixes: priviledges conjuction informations openning permissons
+
+diff --git a/cifscreds.c b/cifscreds.c
+--- a/cifscreds.c
++++ b/cifscreds.c
+@@ -228,3 +228,3 @@ static int cifscreds_add(struct cmdarg *arg)
+ 			if (keyctl(KEYCTL_SETPERM, key, CIFS_KEY_PERMS) < 0) {
+-				fprintf(stderr, "error: Setting permissons "
++				fprintf(stderr, "error: Setting permissions "
+ 					"on key, attempt to delete...\n");
+diff --git a/getcifsacl.c b/getcifsacl.c
+--- a/getcifsacl.c
++++ b/getcifsacl.c
+@@ -457,3 +457,3 @@ getxattr:
+ 			 */
+-			fprintf(stderr, "WARNING: Insufficient priviledges to fetch SACL for %s\n",
++			fprintf(stderr, "WARNING: Insufficient privileges to fetch SACL for %s\n",
+ 				filename);
+diff --git a/idmapwb.rst.in b/idmapwb.rst.in
+--- a/idmapwb.rst.in
++++ b/idmapwb.rst.in
+@@ -13,3 +13,3 @@ DESCRIPTION
+ 
+-This plugin allows the utilities in cifs-utils to work in conjuction with
++This plugin allows the utilities in cifs-utils to work in conjunction with
+ the winbind facility of Samba suite. It handles several functions including
+diff --git a/mount.cifs.rst b/mount.cifs.rst
+--- a/mount.cifs.rst
++++ b/mount.cifs.rst
+@@ -458,3 +458,3 @@ locallease
+ nolease
+-  Do not request lease/oplock when openning a file on the server. This turns
++  Do not request lease/oplock when opening a file on the server. This turns
+   off local caching of IO, byte-range lock and read metadata operations
+diff --git a/pam_cifscreds.c b/pam_cifscreds.c
+--- a/pam_cifscreds.c
++++ b/pam_cifscreds.c
+@@ -244,3 +244,3 @@ static int cifscreds_pam_add(pam_handle_t *ph, const char *user, const char *pas
+ 			if (keyctl(KEYCTL_SETPERM, key, CIFS_KEY_PERMS) < 0) {
+-				pam_syslog(ph, LOG_ERR,"error: Setting permissons "
++				pam_syslog(ph, LOG_ERR,"error: Setting permissions "
+ 					"on key, attempt to delete...");
+diff --git a/smbinfo.rst b/smbinfo.rst
+--- a/smbinfo.rst
++++ b/smbinfo.rst
+@@ -23,3 +23,3 @@ This tool is part of the cifs-utils suite.
+ client file system (CIFS). It is intended to display SMB-specific file
+-informations such as Security Descriptors and Quota.
++information such as Security Descriptors and Quota.
+ 
