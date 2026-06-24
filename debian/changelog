@@ -1,3 +1,12 @@
+cifs-utils (2:7.4-1deepin1) unstable; urgency=medium
+
+  * CVE-2026-12505: cifs.upcall: fix local privilege escalation via
+    forged cifs.spnego key description. Look up the GID via getpwuid()
+    while still in the host namespace, and map UID/GID into the target
+    user namespace via /proc/<pid>/{uid,gid}_map. (Closes: #1140422)
+
+ -- lichenggang <lichenggang@uniontech.com>  Tue, 13 Oct 2026 19:33:13 +0800
+
 cifs-utils (2:7.4-1) unstable; urgency=medium
 
   * new upstream release

@@ -1,2 +1,3 @@
 0001-Fix-fPIE-casing.patch
 spelling.patch
+CVE-2026-12505.patch
